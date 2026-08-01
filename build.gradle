@@ -1,51 +1,19 @@
 // Top-level build file
-
 buildscript {
-  
     repositories {
-      
         google()
-      
         mavenCentral()
-      
     }
-  
     dependencies {
-      
         classpath 'com.android.tools.build:gradle:8.2.2'
-      
         // Chaquopy - lets us run the Python/Flask code directly inside the Android app
-      
         classpath 'com.chaquo.python:gradle:15.0.1'
-      
     }
-  
 }
-
-
 
 allprojects {
-  
     repositories {
-      
         google()
-      
         mavenCentral()
-      
     }
-  
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
