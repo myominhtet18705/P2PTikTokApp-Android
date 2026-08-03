@@ -1,7 +1,6 @@
 package com.p2p.offlinetiktok
 
 import android.annotation.SuppressLint
-import android.net.Uri
 import android.os.Bundle
 import android.util.Log
 import android.view.View
@@ -12,7 +11,6 @@ import android.webkit.WebViewClient
 import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
-import com.chaquo.python.PyException
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import java.io.File
@@ -48,7 +46,6 @@ class MainActivity : AppCompatActivity() {
         webView.settings.allowContentAccess = true
         webView.settings.mediaPlaybackRequiresUserGesture = false
         webView.settings.databaseEnabled = true
-        // Video uploads use <input type="file">
         webView.settings.setSupportMultipleWindows(false)
 
         webView.webViewClient = object : WebViewClient() {
@@ -57,9 +54,21 @@ class MainActivity : AppCompatActivity() {
                 spinner.visibility = View.GONE
                 webView.visibility = View.VISIBLE
             }
+
+            override fun onReceivedError(
+                view: WebView?,
+                errorCode: Int,
+                description: String?,
+                failingUrl: String?
+            ) {
+                super.onReceivedError(view, errorCode, description, failingUrl)
+                Log.e("P2PTikTok", "WebView error: $description at $failingUrl")
+                runOnUiThread {
+                    statusText.text = "Connection error:\n$description"
+                }
+            }
         }
 
-        // Grants camera/mic access to <input type="file" capture> style pickers
         webView.webChromeClient = object : WebChromeClient() {
             override fun onPermissionRequest(request: PermissionRequest) {
                 runOnUiThread { request.grant(request.resources) }
@@ -70,31 +79,31 @@ class MainActivity : AppCompatActivity() {
     /** Starts Chaquopy's embedded Python, then calls flask_server.main() on a
      *  background thread so the Flask dev server doesn't block the UI thread. */
     private fun startPythonServer() {
-        if (!Python.isStarted()) {
-            Python.start(AndroidPlatform(this))
-        }
-
         Thread {
             try {
+                // Use applicationContext to avoid Activity context memory leaks
+                if (!Python.isStarted()) {
+                    Python.start(AndroidPlatform(applicationContext))
+                }
+
                 val py = Python.getInstance()
                 val module = py.getModule("flask_server")
 
                 // Point the app's Flask code at Android's private, writable storage
-                // instead of the (read-only / re-extracted) Chaquopy asset folder.
                 val dataDir = File(filesDir, "p2p_data")
                 if (!dataDir.exists()) dataDir.mkdirs()
                 System.setProperty("APP_DATA_DIR", dataDir.absolutePath)
 
-                // Chaquopy doesn't expose os.environ.setdefault directly from Kotlin,
-                // so we set it via Python's own os module before calling main().
+                // Set via Python's own os module
                 val os = py.getModule("os")
                 os.get("environ")!!.callAttr("__setitem__", "APP_DATA_DIR", dataDir.absolutePath)
 
+                Log.i("P2PTikTok", "Starting Flask server...")
                 module.callAttr("main")
-            } catch (e: PyException) {
-                Log.e("P2PTikTok", "Python/Flask error: ${e.message}", e)
+            } catch (e: Exception) {
+                Log.e("P2PTikTok", "Server failed to start", e)
                 runOnUiThread {
-                    statusText.text = "Server failed to start:\n${e.message}"
+                    statusText.text = "Server failed:\n${e.message}"
                 }
             }
         }.start()
@@ -102,17 +111,15 @@ class MainActivity : AppCompatActivity() {
         waitForServerThenLoad()
     }
 
-    /** Polls localhost:5000 until Flask responds, then loads it into the WebView.
-     *  Runs on a background thread; Flask's own startup (DB init, threads) can
-     *  take a second or two on first launch. */
+    /** Polls localhost:5000 until Flask responds, then loads it into the WebView. */
     private fun waitForServerThenLoad() {
         Thread {
             var attempts = 0
-            while (!serverStarted && attempts < 60) {
+            while (!serverStarted && attempts < 120) {
                 try {
                     val conn = URL(serverUrl).openConnection() as HttpURLConnection
-                    conn.connectTimeout = 500
-                    conn.readTimeout = 500
+                    conn.connectTimeout = 1000
+                    conn.readTimeout = 1000
                     conn.requestMethod = "GET"
                     val code = conn.responseCode
                     if (code in 200..499) {
@@ -132,12 +139,14 @@ class MainActivity : AppCompatActivity() {
                 if (serverStarted) {
                     webView.loadUrl(serverUrl)
                 } else {
-                    statusText.text = "Server did not start in time."
+                    statusText.text = "Server did not start.\nPlease restart the app."
+                    spinner.visibility = View.GONE
                 }
             }
         }.start()
     }
 
+    @Deprecated("Use OnBackPressedDispatcher")
     override fun onBackPressed() {
         if (webView.canGoBack()) {
             webView.goBack()
