@@ -33,6 +33,13 @@ class MainActivity : AppCompatActivity() {
         spinner = findViewById(R.id.loadingSpinner)
         statusText = findViewById(R.id.loadingText)
 
+        // Check if Python is already started (by App class)
+        if (!Python.isStarted()) {
+            statusText.text = "Fatal error: Python runtime could not be initialized. Please reinstall."
+            spinner.visibility = View.GONE
+            return
+        }
+
         setupWebView()
         startPythonServer()
     }
@@ -65,9 +72,6 @@ class MainActivity : AppCompatActivity() {
             ) {
                 super.onReceivedError(view, errorCode, description, failingUrl)
                 Log.e("P2PTikTok", "WebView error: $description at $failingUrl")
-                Handler(Looper.getMainLooper()).post {
-                    statusText.text = "Connection error:\n$description"
-                }
             }
         }
 
@@ -78,31 +82,17 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * PyApplication (declared in AndroidManifest.xml) already calls Python.start()
-     * automatically when the process starts. So we just need to verify it's running.
-     */
     private fun startPythonServer() {
+        // Check for previous crash log
+        try {
+            val crashFile = File(filesDir, "last_crash.txt")
+            if (crashFile.exists()) {
+                Log.w("P2PTikTok", "Previous crash log: " + crashFile.readText())
+            }
+        } catch (e: Exception) { }
+
         Thread {
             try {
-                // PyApplication should have already started Python
-                if (!Python.isStarted()) {
-                    Log.e("P2PTikTok", "Python was NOT started by PyApplication! Attempting manual start...")
-                    try {
-                        Python.start(com.chaquo.python.android.AndroidPlatform(applicationContext))
-                        Log.i("P2PTikTok", "Manual Python start succeeded")
-                    } catch (e: Exception) {
-                        Log.e("P2PTikTok", "Manual Python start failed", e)
-                        Handler(Looper.getMainLooper()).post {
-                            statusText.text = "Fatal: Cannot start Python runtime.\n${e.message}"
-                            spinner.visibility = View.GONE
-                        }
-                        return@Thread
-                    }
-                } else {
-                    Log.i("P2PTikTok", "Python already started by PyApplication")
-                }
-
                 val py = Python.getInstance()
                 val dataDir = File(filesDir, "p2p_data")
                 if (!dataDir.exists()) dataDir.mkdirs()
@@ -117,9 +107,15 @@ class MainActivity : AppCompatActivity() {
                 Log.i("P2PTikTok", "Starting Flask server...")
                 module.callAttr("main")
             } catch (e: Exception) {
-                Log.e("P2PTikTok", "Server failed to start", e)
+                Log.e("P2PTikTok", "Server failed: " + e.javaClass.name + ": " + e.message, e)
+                try {
+                    File(filesDir, "last_crash.txt").appendText(
+                        "SERVER FAIL: " + e.javaClass.name + ": " + e.message + "\n"
+                    )
+                } catch (ignored: Exception) {}
+
                 Handler(Looper.getMainLooper()).post {
-                    statusText.text = "Server failed:\n${e.message ?: "Unknown error"}\n\nCheck Logcat for details."
+                    statusText.text = "Server failed:\n" + (e.message ?: "Unknown error") + "\nPlease reinstall the app."
                     spinner.visibility = View.GONE
                 }
             }
@@ -128,13 +124,10 @@ class MainActivity : AppCompatActivity() {
         waitForServerThenLoad()
     }
 
-    /**
-     * Polls localhost:5000 until Flask responds, then loads it into the WebView.
-     */
     private fun waitForServerThenLoad() {
         Thread {
             var attempts = 0
-            val maxAttempts = 240 // 2 minutes for slower devices
+            val maxAttempts = 300
             while (!serverStarted && attempts < maxAttempts) {
                 try {
                     val conn = URL(serverUrl).openConnection() as HttpURLConnection
@@ -147,7 +140,7 @@ class MainActivity : AppCompatActivity() {
                     }
                     conn.disconnect()
                 } catch (e: Exception) {
-                    // server not up yet, keep polling
+                    // server not up yet
                 }
                 if (!serverStarted) {
                     attempts++
@@ -159,7 +152,7 @@ class MainActivity : AppCompatActivity() {
                 if (serverStarted) {
                     webView.loadUrl(serverUrl)
                 } else {
-                    statusText.text = "Server did not start in time.\nPlease restart the app."
+                    statusText.text = "Server did not start. Please restart the app."
                     spinner.visibility = View.GONE
                 }
             }
