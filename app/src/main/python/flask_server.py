@@ -2350,9 +2350,19 @@ def main():
     init_db()
 
     # ၃။ P2P Threads တွေ စတင် (တခြား ဖုန်း/PC တွေနဲ့ LAN ပေါ်က ချိတ်ဆက်ဖို့)
-    threading.Thread(target=broadcast_presence, daemon=True).start()
-    threading.Thread(target=listen_for_peers, daemon=True).start()
-    threading.Thread(target=auto_sync, daemon=True).start()
+    # Android ပေါ်မှာ socket errors ကြောင့် crash မဖြစ်အောင် try/except ထည့်ထားတယ်
+    try:
+        threading.Thread(target=broadcast_presence, daemon=True).start()
+    except Exception as e:
+        logger.warning(f"broadcast_presence thread failed to start: {e}")
+    try:
+        threading.Thread(target=listen_for_peers, daemon=True).start()
+    except Exception as e:
+        logger.warning(f"listen_for_peers thread failed to start: {e}")
+    try:
+        threading.Thread(target=auto_sync, daemon=True).start()
+    except Exception as e:
+        logger.warning(f"auto_sync thread failed to start: {e}")
 
     # ၄။ App ပိတ်တဲ့အခါ Database ကို Script ထဲကို ပြန်ရေးသွင်းဖို့ Register (PC/portable mode မှာသာ)
     atexit.register(embed_db_into_script)
